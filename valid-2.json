@@ -1,0 +1,29 @@
+{
+    "filename": "valid-2.jpg",
+    "saved_path": "detect_img/valid-2.jpg",
+    "object_count": 2,
+    "objects": [
+        {
+            "class_id": 2,
+            "class_name": "Plastic",
+            "confidence": 0.905,
+            "box": {
+                "x1": 769.2,
+                "y1": 20.9,
+                "x2": 1046.1,
+                "y2": 726.6
+            }
+        },
+        {
+            "class_id": 1,
+            "class_name": "PET Bottle",
+            "confidence": 0.6505,
+            "box": {
+                "x1": 1043.3,
+                "y1": 760.0,
+                "x2": 1430.1,
+                "y2": 1035.7
+            }
+        }
+    ]
+}
