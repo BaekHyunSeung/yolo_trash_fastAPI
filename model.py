@@ -1,59 +1,96 @@
 """
-YOLO 탐지 결과를 저장하기 위한 모델 정의.
-
-정규화 구조:
-- detections: 이미지 단위 이벤트
-- detection_objects: 개별 객체(박스/클래스) 단위
+쓰레기통/탐지/통계 DB 모델 정의.
 """
 
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Boolean,
+    Column,
+    DateTime,
+    Date,
+    Integer,
+    Numeric,
+    String,
+    ForeignKey,
+)
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
 from database import Base
 
 
+class TrashCan(Base):
+    """쓰레기통 기본 정보 및 현재 상태."""
+
+    __tablename__ = "TrashCan"
+
+    trashcan_id = Column(BigInteger, primary_key=True, autoincrement=True)
+    trashcan_name = Column(String(255))
+    trashcan_capacity = Column(Integer)
+    current_volume = Column(Integer)
+    trashcan_city = Column(String(100))
+    address_detail = Column(String(255))
+    trashcan_latitude = Column(Numeric(10, 8))
+    trashcan_longitude = Column(Numeric(11, 8))
+    is_online = Column(Boolean, default=False)
+    last_connected_at = Column(DateTime)
+
+    detections = relationship("Detection", back_populates="trashcan")
+
+
+class WasteType(Base):
+    """쓰레기 종류 마스터."""
+
+    __tablename__ = "WasteType"
+
+    waste_type_id = Column(BigInteger, primary_key=True, autoincrement=True)
+    type_name = Column(String(50), unique=True, nullable=False, index=True)
+
+    detection_details = relationship("DetectionDetail", back_populates="waste_type")
+    daily_stats = relationship("DailyStats", back_populates="waste_type")
+
+
 class Detection(Base):
-    """이미지 단위 탐지 이벤트."""
+    """탐지 이벤트(이미지 단위)."""
 
-    __tablename__ = "detections"
+    __tablename__ = "Detection"
 
-    # 내부 식별자
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    # 원본 이미지 파일명/경로
-    source_image = Column(String(255), nullable=False)
-    # 이미지 내 탐지 객체 수
-    total_objects = Column(Integer, nullable=False)
-    # 탐지 시각 (기본값: 현재 시각)
-    detected_at = Column(DateTime, nullable=False, index=True, default=func.now())
-    # 생성 시각
-    created_at = Column(DateTime, nullable=False, default=func.now())
+    detection_id = Column(BigInteger, primary_key=True, autoincrement=True)
+    trashcan_id = Column(BigInteger, ForeignKey("TrashCan.trashcan_id"), nullable=False, index=True)
+    image_name = Column(String(255))
+    image_path = Column(String(512))
+    detected_at = Column(DateTime, default=func.now(), nullable=False)
+    object_count = Column(Integer)
 
-    # 1:N 관계 (탐지 이벤트 -> 객체들)
-    objects = relationship("DetectionObject", back_populates="detection")
+    trashcan = relationship("TrashCan", back_populates="detections")
+    details = relationship("DetectionDetail", back_populates="detection")
 
 
-class DetectionObject(Base):
-    """탐지된 개별 객체(플라스틱/유리/캔/스티로폼 등)."""
+class DetectionDetail(Base):
+    """탐지 상세 결과(개별 객체)."""
 
-    __tablename__ = "detection_objects"
+    __tablename__ = "Detection_detail"
 
-    # 내부 식별자
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    # 탐지 이벤트 FK
-    detection_id = Column(Integer, ForeignKey("detections.id"), nullable=False, index=True)
-    # 모델이 예측한 클래스 정보
-    class_id = Column(Integer, nullable=False)
-    class_name = Column(String(64), nullable=False, index=True)
-    # 신뢰도
-    confidence = Column(Float, nullable=False)
-    # 바운딩 박스 좌표
-    x1 = Column(Float, nullable=False)
-    y1 = Column(Float, nullable=False)
-    x2 = Column(Float, nullable=False)
-    y2 = Column(Float, nullable=False)
-    # 생성 시각
-    created_at = Column(DateTime, nullable=False, default=func.now())
+    detail_id = Column(BigInteger, primary_key=True, autoincrement=True)
+    detection_id = Column(BigInteger, ForeignKey("Detection.detection_id"), nullable=False, index=True)
+    waste_type_id = Column(BigInteger, ForeignKey("WasteType.waste_type_id"), nullable=False, index=True)
+    confidence = Column(Numeric(5, 4))
+    bbox_info = Column(JSON)
 
-    # N:1 관계 (객체 -> 탐지 이벤트)
-    detection = relationship("Detection", back_populates="objects")
+    detection = relationship("Detection", back_populates="details")
+    waste_type = relationship("WasteType", back_populates="detection_details")
+
+
+class DailyStats(Base):
+    """일별 탐지 통계."""
+
+    __tablename__ = "DailyStats"
+
+    stats_id = Column(BigInteger, primary_key=True, autoincrement=True)
+    stats_date = Column(Date, nullable=False, index=True)
+    trashcan_city = Column(String(100))
+    waste_type_id = Column(BigInteger, ForeignKey("WasteType.waste_type_id"), nullable=False, index=True)
+    detection_count = Column(BigInteger)
+
+    waste_type = relationship("WasteType", back_populates="daily_stats")

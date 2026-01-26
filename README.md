@@ -1,6 +1,6 @@
 # Trash Detection API 문서
 
-YOLO 객체 탐지 결과(`result.json`)를 MySQL에 저장하기 위한 최소 FastAPI 백엔드입니다.
+YOLO 객체 탐지 결과(`valid-2.json`)를 MySQL에 저장하기 위한 최소 FastAPI 백엔드입니다.
 
 ## 1) 구성 요약
 - `database.py`: DB 연결/세션/베이스 설정
