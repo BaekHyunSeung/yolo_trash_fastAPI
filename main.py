@@ -5,6 +5,7 @@ FastAPI 진입점.
 - /health: 헬스체크
 """
 
+import asyncio
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional
 
@@ -14,7 +15,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from database import Base, SessionLocal, engine
-from model import Detection, DetectionDetail, TrashCan, WasteType
+from model import DailyStats, Detection, DetectionDetail, TrashCan, WasteType
 
 # FastAPI 앱 인스턴스 (자동 문서화 포함)
 app = FastAPI(title="Trash Detection API")
@@ -99,12 +100,82 @@ def get_or_create_waste_type(db: Session, class_id: int, class_name: str) -> Was
     db.flush()
     return waste_type
 
+# 통계 갱신 주기 (분)
+STATS_INTERVAL_MINUTES = 60
+# 통계 데이터 조회 대기 일수
+STATS_LAG_DAYS = 1
+
+
+def upsert_daily_stats(
+    db: Session,
+    stats_date: date,
+    trashcan_city: str,
+    waste_type_id: int,
+    detection_count: int,
+) -> None:
+    row = (
+        db.query(DailyStats)
+        .filter(
+            DailyStats.stats_date == stats_date,
+            DailyStats.trashcan_city == trashcan_city,
+            DailyStats.waste_type_id == waste_type_id,
+        )
+        .one_or_none()
+    )
+    if row:
+        row.detection_count = detection_count
+    else:
+        db.add(
+            DailyStats(
+                stats_date=stats_date,
+                trashcan_city=trashcan_city,
+                waste_type_id=waste_type_id,
+                detection_count=detection_count,
+            )
+        )
+
+
+def refresh_daily_stats(target_date: date) -> None:
+    with SessionLocal() as db:
+        rows = (
+            db.query(TrashCan.trashcan_city, DetectionDetail.waste_type_id, func.count())
+            .join(Detection, Detection.trashcan_id == TrashCan.trashcan_id)
+            .join(DetectionDetail, DetectionDetail.detection_id == Detection.detection_id)
+            .filter(func.date(Detection.detected_at) == target_date)
+            .group_by(TrashCan.trashcan_city, DetectionDetail.waste_type_id)
+            .all()
+        )
+        for trashcan_city, waste_type_id, detection_count in rows:
+            upsert_daily_stats(db, target_date, trashcan_city, waste_type_id, detection_count)
+        db.commit()
+
+
+async def stats_scheduler() -> None:
+    while True:
+        target_date = (datetime.utcnow() - timedelta(days=STATS_LAG_DAYS)).date()
+        try:
+            refresh_daily_stats(target_date)
+        except Exception:
+            # 스케줄러 실패가 서버를 죽이지 않도록 보호
+            pass
+        await asyncio.sleep(STATS_INTERVAL_MINUTES * 60)
+
 
 @app.on_event("startup")
-def on_startup() -> None:
-    """앱 시작 시 테이블 자동 생성."""
+async def on_startup() -> None:
+    """앱 시작 시 테이블 자동 생성 및 스케줄러 시작."""
 
     Base.metadata.create_all(bind=engine)
+    app.state.stats_task = asyncio.create_task(stats_scheduler())
+
+
+@app.on_event("shutdown")
+async def on_shutdown() -> None:
+    """스케줄러 종료."""
+
+    task = getattr(app.state, "stats_task", None)
+    if task:
+        task.cancel()
 
 
 @app.get("/health")
@@ -247,19 +318,21 @@ def dashboard_stats(
 @app.get("/trashcans/collection-needed")
 def collection_needed(
     status: Optional[str] = Query(None, pattern="^(포화|보통|여유|알수없음)$"),
-    sort: str = Query("status", pattern="^(status|ratio)$"),
-    window_days: int = Query(7, ge=1, le=365),
+    sort: str = Query("status", pattern="^(status|count)$"),
+    window_days: int = Query(7, ge=1, le=365), # 수거 필요 쓰레기통 조회 기간 ex.최근 7일간 발생한 탐지횟수 통해 상태 계산
+    # 쓰레기통 상태 계산 임계값
+    full_threshold: int = Query(50, ge=1), # 포화 임계값
+    medium_threshold: int = Query(20, ge=1), # 보통 임계값
     db: Session = Depends(get_db),
 ) -> dict:
     """탐지 이벤트 기반 수거 필요 쓰레기통 조회."""
 
-    def compute_status(capacity: Optional[int], current: Optional[int]) -> str:
-        if not capacity or current is None:
+    def compute_status(current: Optional[int]) -> str:
+        if current is None:
             return "알수없음"
-        ratio = current / capacity
-        if ratio >= 0.9:
+        elif current >= full_threshold:
             return "포화"
-        if ratio >= 0.6:
+        elif current >= medium_threshold:
             return "보통"
         return "여유"
 
@@ -277,10 +350,7 @@ def collection_needed(
     result = []
     for row in rows:
         current_volume = volume_map.get(row.trashcan_id)
-        ratio = None
-        if row.trashcan_capacity and current_volume is not None:
-            ratio = current_volume / row.trashcan_capacity
-        state = compute_status(row.trashcan_capacity, current_volume)
+        state = compute_status(current_volume)
         if status and state != status:
             continue
         result.append(
@@ -288,19 +358,24 @@ def collection_needed(
                 "trashcan_id": row.trashcan_id,
                 "trashcan_name": row.trashcan_name,
                 "trashcan_city": row.trashcan_city,
-                "trashcan_capacity": row.trashcan_capacity,
-                "current_volume": current_volume,
-                "fill_ratio": ratio,
+                "detection_count": current_volume,
                 "status": state,
                 "window_days": window_days,
+                "full_threshold": full_threshold,
+                "medium_threshold": medium_threshold,
             }
         )
 
     status_order = {"포화": 0, "보통": 1, "여유": 2, "알수없음": 3}
-    if sort == "ratio":
-        result.sort(key=lambda item: (item["fill_ratio"] is None, -(item["fill_ratio"] or 0)))
+    if sort == "count":
+        result.sort(key=lambda item: (item["detection_count"] is None, -(item["detection_count"] or 0)))
     else:
-        result.sort(key=lambda item: (status_order.get(item["status"], 9), -(item["fill_ratio"] or 0)))
+        result.sort(
+            key=lambda item: (
+                status_order.get(item["status"], 9),
+                -(item["detection_count"] or 0),
+            )
+        )
     return {"items": result}
 
 

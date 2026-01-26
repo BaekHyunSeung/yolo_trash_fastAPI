@@ -1,0 +1,17 @@
+{
+    "source_image": "809439@0_05001_220907_P1_T3__0281.jpg",
+    "total_objects": 1,
+    "predictions": [
+        {
+            "class_id": 3,
+            "class_name": "Styrofoam",
+            "confidence": 0.8481,
+            "box": {
+                "x1": 1042.8,
+                "y1": 170.3,
+                "x2": 1376.2,
+                "y2": 626.7
+            }
+        }
+    ]
+}
