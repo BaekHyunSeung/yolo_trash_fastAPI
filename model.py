@@ -28,13 +28,13 @@ class TrashCan(Base):
     trashcan_id = Column(BigInteger, primary_key=True, autoincrement=True)
     trashcan_name = Column(String(255))
     trashcan_capacity = Column(Integer)
-    current_volume = Column(Integer)
     trashcan_city = Column(String(100))
     address_detail = Column(String(255))
     trashcan_latitude = Column(Numeric(10, 8))
     trashcan_longitude = Column(Numeric(11, 8))
     is_online = Column(Boolean, default=False)
     last_connected_at = Column(DateTime)
+    is_deleted = Column(Boolean, default=False)
 
     detections = relationship("Detection", back_populates="trashcan")
 

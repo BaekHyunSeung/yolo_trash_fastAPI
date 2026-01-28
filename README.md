@@ -9,7 +9,7 @@ YOLO 객체 탐지 결과(`valid-2.json`)를 MySQL에 저장하기 위한 최소
 
 ## 2) 설치
 ```bash
-pip install fastapi uvicorn sqlalchemy pymysql pydantic
+pip install fastapi uvicorn sqlalchemy pymysql pydantic cryptography
 ```
 
 ## 3) DB 설정
@@ -88,7 +88,7 @@ uvicorn main:app --reload
 응답 예시:
 ```json
 {
-  "period": "week",
+  "period": "custom",
   "start_date": "2026-01-20",
   "end_date": "2026-01-26",
   "total_events": 1,
@@ -99,16 +99,32 @@ uvicorn main:app --reload
 ```
 
 ### 수거 필요 쓰레기통 조회
-`GET /trashcans/collection-needed?window_days=7&status=포화&sort=ratio`
+`GET /trashcans/collection-needed?window_days=7&full_threshold=50&medium_threshold=20&status=full&sort=status`
 
 ### 미연결 쓰레기통 조회
 `GET /trashcans/offline?stale_hours=24`
+
+### 쓰레기통 목록/검색
+`GET /trashcans?offset=0&limit=20&sort=total_desc&city=Seoul&name=TrashCan&is_online=true`
+
+### 쓰레기통 위치(지도)
+`GET /trashcans/locations?offset=0&limit=200`
+
+### 쓰레기통 수정
+`PATCH /trashcans/{trashcan_id}` 또는 `POST /trashcans/{trashcan_id}`
+
+### 쓰레기통 삭제/복구
+`DELETE /trashcans/{trashcan_id}`
+`POST /trashcans/{trashcan_id}/restore`
+
+### 탐지 상세(사진/일시)
+`GET /detections/details?waste_type=전체&offset=0&limit=20`
 
 ## 6) 테이블 구조
 
 ### TrashCan
 - 쓰레기통 기본 정보
-- 주요 컬럼: `trashcan_id`, `trashcan_city`, `trashcan_capacity`, `is_online`
+- 주요 컬럼: `trashcan_id`, `trashcan_city`, `trashcan_capacity`, `is_online`, `is_deleted`
 
 ### WasteType
 - 쓰레기 종류 마스터
